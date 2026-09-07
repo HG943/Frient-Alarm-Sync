@@ -1,0 +1,504 @@
+blueprint:
+  name: Frient KEPZB-110 <-> Alarmo
+  description: >
+    Bidirectional synchronization between one Frient KEPZB-110 keypad and one
+    Alarmo instance. Alarmo is the source of truth. Keypad Arm requests are
+    passed to Alarmo and the blueprint sends the IAS ACE Arm Response back to
+    the keypad according to Alarmo's result.
+  domain: automation
+
+  input:
+    keypad:
+      name: KEPZB-110 keypad
+      description: The single KEPZB-110 controlled by this blueprint instance.
+      selector:
+        device:
+          filter:
+            - integration: zha
+              manufacturer: frient A/S
+              model: KEPZB-110
+
+    alarmo:
+      name: Alarmo
+      description: The single Alarmo entity controlled by this blueprint instance.
+      selector:
+        entity:
+          filter:
+            - integration: alarmo
+              domain: alarm_control_panel
+
+    vacation_mode:
+      name: Keypad mode for Alarmo vacation
+      description: How armed_vacation is represented on the three-mode keypad.
+      default: arm_all_zones
+      selector:
+        select:
+          options:
+            - label: Arm all zones (Away)
+              value: arm_all_zones
+            - label: Arm day zones (Home)
+              value: arm_day_zones
+            - label: Arm night zones (Night)
+              value: arm_night_zones
+
+    custom_mode:
+      name: Keypad mode for Alarmo custom
+      description: How armed_custom_bypass is represented on the three-mode keypad.
+      default: arm_all_zones
+      selector:
+        select:
+          options:
+            - label: Arm all zones (Away)
+              value: arm_all_zones
+            - label: Arm day zones (Home)
+              value: arm_day_zones
+            - label: Arm night zones (Night)
+              value: arm_night_zones
+
+    keypad_id:
+      name: Keypad instance ID
+      description: >
+        A small whole number identifying this blueprint instance. Alarmo
+        echoes this back on the events it fires in response to a command,
+        which is how this instance knows an Arm Response belongs to it.
+        If you use this blueprint for more than one keypad, give each
+        instance a different value.
+      default: 1
+      selector:
+        number:
+          min: 1
+          max: 9999
+          mode: box
+
+mode: parallel
+max: 20
+
+variables:
+  keypad_device: !input keypad
+  alarmo_entity: !input alarmo
+  vacation_mode: !input vacation_mode
+  custom_mode: !input custom_mode
+  keypad_id: !input keypad_id
+
+trigger:
+  # KEYPAD -> ALARMO
+  - id: keypad_arm
+    platform: event
+    event_type: zha_event
+    event_data:
+      command: keypad_arm
+
+  # ALARMO -> KEYPAD
+  - id: alarmo_state
+    platform: state
+    entity_id: !input alarmo
+    from: null
+    to:
+      - disarmed
+      - arming
+      - armed_away
+      - armed_home
+      - armed_night
+      - armed_vacation
+      - armed_custom_bypass
+      - armed_custom
+      - pending
+      - triggered
+
+  # ALARMO RESULT -> KEYPAD ARM RESPONSE
+  - id: alarmo_success
+    platform: event
+    event_type: alarmo_command_success
+
+  - id: alarmo_failed
+    platform: event
+    event_type: alarmo_failed_to_arm
+
+  # KEYPAD -> GET PANEL STATUS (e.g. proximity sensor wake)
+  - id: keypad_get_panel_status
+    platform: event
+    event_type: zha_event
+    event_data:
+      command: keypad_get_panel_status
+
+action:
+  - choose:
+
+      # ============================================================
+      # KEYPAD -> ALARMO
+      # ============================================================
+      - conditions:
+          - condition: trigger
+            id: keypad_arm
+          - condition: template
+            value_template: >
+              {{ trigger.event.data.device_id | string == keypad_device | string }}
+        sequence:
+          - variables:
+              keypad_action: >
+                {{ trigger.event.data.args.action | default('', true) }}
+              keypad_code: >
+                {{ trigger.event.data.args.code | default('', true) }}
+
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ keypad_action == 'disarm' }}"
+                sequence:
+                  - action: alarmo.disarm
+                    data:
+                      entity_id: !input alarmo
+                      code: "{{ keypad_code }}"
+                      context_id: "{{ keypad_id | int }}"
+
+              - conditions:
+                  - condition: template
+                    value_template: "{{ keypad_action == 'arm_day_zones' }}"
+                sequence:
+                  - action: alarmo.arm
+                    data:
+                      entity_id: !input alarmo
+                      mode: home
+                      code: "{{ keypad_code }}"
+                      context_id: "{{ keypad_id | int }}"
+
+              - conditions:
+                  - condition: template
+                    value_template: "{{ keypad_action == 'arm_night_zones' }}"
+                sequence:
+                  - action: alarmo.arm
+                    data:
+                      entity_id: !input alarmo
+                      mode: night
+                      code: "{{ keypad_code }}"
+                      context_id: "{{ keypad_id | int }}"
+
+              - conditions:
+                  - condition: template
+                    value_template: "{{ keypad_action == 'arm_all_zones' }}"
+                sequence:
+                  - action: alarmo.arm
+                    data:
+                      entity_id: !input alarmo
+                      mode: away
+                      code: "{{ keypad_code }}"
+                      context_id: "{{ keypad_id | int }}"
+
+      # ============================================================
+      # ALARMO COMMAND SUCCESS -> IAS ACE ARM RESPONSE
+      # ============================================================
+      - conditions:
+          - condition: trigger
+            id: alarmo_success
+          - condition: template
+            value_template: >
+              {{ trigger.event.data.entity_id | default('') == alarmo_entity }}
+          - condition: template
+            value_template: >
+              {{ trigger.event.data.context_id | default(-1) | int(-1) == keypad_id | int }}
+        sequence:
+          - variables:
+              arm_notification: >
+                {% if trigger.event.data.action == 'disarm' %}
+                  0
+                {% elif trigger.event.data.mode == 'home' %}
+                  1
+                {% elif trigger.event.data.mode == 'night' %}
+                  2
+                {% elif trigger.event.data.mode == 'away' %}
+                  3
+                {% elif trigger.event.data.mode == 'vacation' %}
+                  {% if vacation_mode == 'arm_day_zones' %}1
+                  {% elif vacation_mode == 'arm_night_zones' %}2
+                  {% else %}3
+                  {% endif %}
+                {% elif trigger.event.data.mode == 'custom' %}
+                  {% if custom_mode == 'arm_day_zones' %}1
+                  {% elif custom_mode == 'arm_night_zones' %}2
+                  {% else %}3
+                  {% endif %}
+                {% else %}
+                  6
+                {% endif %}
+
+          - variables:
+              keypad_ieee: >
+                {% set ns = namespace(ieee='') %}
+                {% for identifier in device_attr(keypad_device, 'identifiers') | default([]) %}
+                  {% if identifier[0] == 'zha' %}
+                    {% set ns.ieee = identifier[1] %}
+                  {% endif %}
+                {% endfor %}
+                {{ ns.ieee }}
+
+          - condition: template
+            value_template: "{{ keypad_ieee != '' }}"
+
+          - action: zha.issue_zigbee_cluster_command
+            data:
+              ieee: "{{ keypad_ieee }}"
+              endpoint_id: 44
+              cluster_id: 1281
+              cluster_type: out
+              command: 0
+              command_type: client
+              params:
+                arm_notification: "{{ arm_notification | int(6) }}"
+
+      # ============================================================
+      # ALARMO FAILED TO ARM / DISARM -> IAS ACE ARM RESPONSE
+      #
+      # Alarmo only ever fires one failure event, alarmo_failed_to_arm,
+      # distinguishing the cause via `reason`: open_sensors, not_allowed,
+      # or invalid_code. There is no separate event for "no code" or
+      # "command not allowed" on the HA event bus (those names only
+      # exist on Alarmo's MQTT event topic), so all cases are handled
+      # here:
+      #
+      # reason == invalid_code                      -> 0x04 Invalid code
+      # reason == not_allowed, command == disarm     -> 0x06 Already disarmed
+      # reason == not_allowed, command != disarm     -> 0x05 Not ready to arm
+      # reason == open_sensors (or anything else)    -> 0x05 Not ready to arm
+      #
+      # If testing shows Alarmo sends a distinct reason for "no code
+      # provided" (rather than folding it into invalid_code), add a
+      # matching elif branch below for it.
+      # ============================================================
+      - conditions:
+          - condition: trigger
+            id: alarmo_failed
+          - condition: template
+            value_template: >
+              {{ trigger.event.data.entity_id | default('') == alarmo_entity }}
+          - condition: template
+            value_template: >
+              {{ trigger.event.data.context_id | default(-1) | int(-1) == keypad_id | int }}
+        sequence:
+          - variables:
+              arm_notification: >
+                {% if trigger.event.data.reason == 'invalid_code' %}
+                  4
+                {% elif trigger.event.data.reason == 'not_allowed' and trigger.event.data.command == 'disarm' %}
+                  6
+                {% else %}
+                  5
+                {% endif %}
+              keypad_ieee: >
+                {% set ns = namespace(ieee='') %}
+                {% for identifier in device_attr(keypad_device, 'identifiers') | default([]) %}
+                  {% if identifier[0] == 'zha' %}
+                    {% set ns.ieee = identifier[1] %}
+                  {% endif %}
+                {% endfor %}
+                {{ ns.ieee }}
+
+          - condition: template
+            value_template: "{{ keypad_ieee != '' }}"
+
+          - action: zha.issue_zigbee_cluster_command
+            data:
+              ieee: "{{ keypad_ieee }}"
+              endpoint_id: 44
+              cluster_id: 1281
+              cluster_type: out
+              command: 0
+              command_type: client
+              params:
+                arm_notification: "{{ arm_notification | int(5) }}"
+
+      # ============================================================
+      # ALARMO STATE -> KEYPAD PANEL STATUS CHANGED
+      # ============================================================
+      - conditions:
+          - condition: trigger
+            id: alarmo_state
+        sequence:
+          - variables:
+              alarm_state: "{{ states(alarmo_entity) }}"
+              alarm_delay: >
+                {{ state_attr(alarmo_entity, 'delay') | default(0, true) | int(0) }}
+
+              panel_status: >
+                {% if alarm_state == 'disarmed' %}
+                  0
+                {% elif alarm_state == 'armed_home' %}
+                  1
+                {% elif alarm_state == 'armed_night' %}
+                  2
+                {% elif alarm_state == 'armed_away' %}
+                  3
+                {% elif alarm_state == 'armed_vacation' %}
+                  {% if vacation_mode == 'arm_day_zones' %}1
+                  {% elif vacation_mode == 'arm_night_zones' %}2
+                  {% else %}3
+                  {% endif %}
+                {% elif alarm_state in ['armed_custom_bypass', 'armed_custom'] %}
+                  {% if custom_mode == 'arm_day_zones' %}1
+                  {% elif custom_mode == 'arm_night_zones' %}2
+                  {% else %}3
+                  {% endif %}
+                {% elif alarm_state == 'arming' %}
+                  4
+                {% elif alarm_state == 'pending' %}
+                  5
+                {% elif alarm_state == 'triggered' %}
+                  7
+                {% else %}
+                  6
+                {% endif %}
+
+              audible_notification: >
+                {% if alarm_state in ['arming', 'pending', 'triggered'] %}
+                  1
+                {% else %}
+                  0
+                {% endif %}
+
+              alarm_status: >
+                {% if alarm_state == 'triggered' %}
+                  1
+                {% else %}
+                  0
+                {% endif %}
+
+          - variables:
+              keypad_ieee: >
+                {% set ns = namespace(ieee='') %}
+                {% for identifier in device_attr(keypad_device, 'identifiers') | default([]) %}
+                  {% if identifier[0] == 'zha' %}
+                    {% set ns.ieee = identifier[1] %}
+                  {% endif %}
+                {% endfor %}
+                {{ ns.ieee }}
+
+          - condition: template
+            value_template: "{{ keypad_ieee != '' }}"
+
+          # Alarmo appears to update its own state (which fires this
+          # trigger) before it fires alarmo_command_success, so without
+          # this, Panel Status Changed can reach the keypad before the
+          # Arm Response confirming the same arm request. Give the Arm
+          # Response a head start for the two transient states where
+          # that race is possible.
+          - if:
+              - condition: template
+                value_template: "{{ alarm_state in ['arming', 'pending'] }}"
+            then:
+              - delay:
+                  milliseconds: 500
+
+          - action: zha.issue_zigbee_cluster_command
+            data:
+              ieee: "{{ keypad_ieee }}"
+              endpoint_id: 44
+              cluster_id: 1281
+              cluster_type: out
+              command: 4
+              command_type: client
+              params:
+                panel_status: "{{ panel_status | int(6) }}"
+                seconds_remaining: >
+                  {% if alarm_state in ['arming', 'pending'] %}
+                    {{ alarm_delay }}
+                  {% else %}
+                    0
+                  {% endif %}
+                audible_notification: "{{ audible_notification | int(0) }}"
+                alarm_status: "{{ alarm_status | int(0) }}"
+
+      # ============================================================
+      # KEYPAD GET PANEL STATUS -> KEYPAD PANEL STATUS RESPONSE
+      #
+      # Direct reply to the keypad's own query (e.g. fired when the
+      # proximity sensor wakes it), using command 5 (panel_status_
+      # response) rather than the command 4 broadcast above. Same
+      # status computation, just a different reply command and no
+      # need for the arm/disarm race delay since this isn't tied to
+      # an in-flight arm request.
+      # ============================================================
+      - conditions:
+          - condition: trigger
+            id: keypad_get_panel_status
+          - condition: template
+            value_template: >
+              {{ trigger.event.data.device_id | string == keypad_device | string }}
+        sequence:
+          - variables:
+              alarm_state: "{{ states(alarmo_entity) }}"
+              alarm_delay: >
+                {{ state_attr(alarmo_entity, 'delay') | default(0, true) | int(0) }}
+
+              panel_status: >
+                {% if alarm_state == 'disarmed' %}
+                  0
+                {% elif alarm_state == 'armed_home' %}
+                  1
+                {% elif alarm_state == 'armed_night' %}
+                  2
+                {% elif alarm_state == 'armed_away' %}
+                  3
+                {% elif alarm_state == 'armed_vacation' %}
+                  {% if vacation_mode == 'arm_day_zones' %}1
+                  {% elif vacation_mode == 'arm_night_zones' %}2
+                  {% else %}3
+                  {% endif %}
+                {% elif alarm_state in ['armed_custom_bypass', 'armed_custom'] %}
+                  {% if custom_mode == 'arm_day_zones' %}1
+                  {% elif custom_mode == 'arm_night_zones' %}2
+                  {% else %}3
+                  {% endif %}
+                {% elif alarm_state == 'arming' %}
+                  4
+                {% elif alarm_state == 'pending' %}
+                  5
+                {% elif alarm_state == 'triggered' %}
+                  7
+                {% else %}
+                  6
+                {% endif %}
+
+              audible_notification: >
+                {% if alarm_state in ['arming', 'pending', 'triggered'] %}
+                  1
+                {% else %}
+                  0
+                {% endif %}
+
+              alarm_status: >
+                {% if alarm_state == 'triggered' %}
+                  1
+                {% else %}
+                  0
+                {% endif %}
+
+          - variables:
+              keypad_ieee: >
+                {% set ns = namespace(ieee='') %}
+                {% for identifier in device_attr(keypad_device, 'identifiers') | default([]) %}
+                  {% if identifier[0] == 'zha' %}
+                    {% set ns.ieee = identifier[1] %}
+                  {% endif %}
+                {% endfor %}
+                {{ ns.ieee }}
+
+          - condition: template
+            value_template: "{{ keypad_ieee != '' }}"
+
+          - action: zha.issue_zigbee_cluster_command
+            data:
+              ieee: "{{ keypad_ieee }}"
+              endpoint_id: 44
+              cluster_id: 1281
+              cluster_type: out
+              command: 5
+              command_type: client
+              params:
+                panel_status: "{{ panel_status | int(6) }}"
+                seconds_remaining: >
+                  {% if alarm_state in ['arming', 'pending'] %}
+                    {{ alarm_delay }}
+                  {% else %}
+                    0
+                  {% endif %}
+                audible_notification: "{{ audible_notification | int(0) }}"
+                alarm_status: "{{ alarm_status | int(0) }}"
