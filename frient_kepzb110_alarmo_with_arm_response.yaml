@@ -70,8 +70,8 @@ blueprint:
           max: 9999
           mode: box
 
-mode: parallel
-max: 20
+mode: queued
+max: 10
 
 variables:
   keypad_device: !input keypad
@@ -283,6 +283,8 @@ action:
                 {% else %}
                   5
                 {% endif %}
+
+          - variables:
               keypad_ieee: >
                 {% set ns = namespace(ieee='') %}
                 {% for identifier in device_attr(keypad_device, 'identifiers') | default([]) %}
@@ -374,19 +376,6 @@ action:
           - condition: template
             value_template: "{{ keypad_ieee != '' }}"
 
-          # Alarmo appears to update its own state (which fires this
-          # trigger) before it fires alarmo_command_success, so without
-          # this, Panel Status Changed can reach the keypad before the
-          # Arm Response confirming the same arm request. Give the Arm
-          # Response a head start for the two transient states where
-          # that race is possible.
-          - if:
-              - condition: template
-                value_template: "{{ alarm_state in ['arming', 'pending'] }}"
-            then:
-              - delay:
-                  milliseconds: 500
-
           - action: zha.issue_zigbee_cluster_command
             data:
               ieee: "{{ keypad_ieee }}"
@@ -412,9 +401,7 @@ action:
       # Direct reply to the keypad's own query (e.g. fired when the
       # proximity sensor wakes it), using command 5 (panel_status_
       # response) rather than the command 4 broadcast above. Same
-      # status computation, just a different reply command and no
-      # need for the arm/disarm race delay since this isn't tied to
-      # an in-flight arm request.
+      # status computation, just a different reply command.
       # ============================================================
       - conditions:
           - condition: trigger
@@ -423,6 +410,14 @@ action:
             value_template: >
               {{ trigger.event.data.device_id | string == keypad_device | string }}
         sequence:
+          # mode: queued (see top of file) guarantees this can't start
+          # until any in-flight alarmo_success/alarmo_failed run (and
+          # its Arm Response) has fully sent and been acknowledged over
+          # Zigbee — the keypad only sends this query in reaction to
+          # receiving that Arm Response, so ordering is already correct
+          # by the time this runs. alarm_state below is read fresh for
+          # the same reason: the arm/disarm attempt has already settled
+          # by the time this run gets to execute.
           - variables:
               alarm_state: "{{ states(alarmo_entity) }}"
               alarm_delay: >
