@@ -34,12 +34,22 @@ needs the device already reporting through the new quirk.
    folder first if it doesn't exist yet).
 3. Restart Home Assistant. Quirks are only loaded at ZHA startup —
    reloading the ZHA integration alone is not enough.
-4. After restart, open the KEPZB-110 device page and confirm: no
-   native `alarm_control_panel` entity, and the five entities listed
-   below (Last keypad action, Keypad state, Keypad delay remaining,
-   Keypad alarm status, Tamper) are present. If they're missing,
-   check Settings → System → Logs for a quirk load error before going
-   further — the blueprint will have nothing to listen to otherwise.
+4. After restart, verify the entities actually exist using Developer
+   Tools → Template rather than the device page's summary view — the
+   device page groups entities into sections that can make some look
+   entirely absent when they're actually just disabled or, if a quirk
+   is genuinely broken (see "Entity architecture" below), missing for
+   real:
+   ```
+   {{ device_entities('<this device's device_id>') }}
+   ```
+   You should see five entities: Last keypad action, Keypad state,
+   Keypad delay remaining, Keypad alarm status, and Tamper — alongside
+   whatever standard ones (Battery, Identify, Firmware) are always
+   present regardless of any quirk. If the five custom ones are
+   missing, check Settings → System → Logs for a quirk load error
+   before going further — the blueprint will have nothing to listen to
+   otherwise.
 
 ### 2. Blueprint
 
@@ -74,6 +84,24 @@ from whatever IAS ACE responses the device receives:
 The blueprint listens for both, drives Alarmo accordingly, and replies
 over Zigbee with the matching IAS ACE command (`ArmResponse`,
 `PanelStatusChanged`, or `PanelStatusResponse`).
+
+**Entity architecture, and a real bug this hit:** real ACE traffic
+only ever arrives on the client-role cluster instance (the one
+`.replaces()` swaps in), but `.sensor()`/`.binary_sensor()` entity
+metadata can only attach to a **server-role** cluster instance —
+attaching it to the client-role one (as an earlier version of this
+quirk did) causes ZHA to silently create *no entity at all*, with no
+exception anywhere. Confirmed by directly inspecting ZHA's quirk
+registry and entity-discovery code, and cross-checked against two
+other manufacturers' quirks in the official zha-quirks library that
+use the same fix. The fix: `.adds()` a second, purely-local instance
+of the same class as a server-role cluster (the device never actually
+talks to it — it only exists to host entity values), and the real
+command handler pushes every update into that sibling too. If you
+ever add a new manufacturer-specific attribute here, point its
+`.sensor()`/etc. entry at the plain `cluster_id` with no
+`cluster_type` override (defaults to Server, matching the sibling),
+not at the client-role instance.
 
 ## Entities
 
@@ -129,6 +157,21 @@ transaction: <ZCL transaction sequence number>
   events can be matched back to the keypad that issued the request.
   Only matters if you run more than one instance (e.g. more than one
   physical keypad); each instance needs a different value.
+- **Special code 1 / Special code 2, each with an action** — optional.
+  If the code entered on the keypad matches one of these exactly,
+  Alarmo is never called at all (arming/disarming is skipped for that
+  attempt) and only the paired action runs instead — e.g. a code that
+  opens the garage door rather than arming/disarming anything. A
+  direct Arm Response reflecting Alarmo's actual, unchanged current
+  status is still sent back, so the keypad doesn't hang waiting for a
+  reply to the Arm command it sent. Leave a code blank to disable that
+  slot; an empty code can never match, even if the real keypad also
+  sends an empty code (e.g. when no code is required by Alarmo).
+  Considered and deliberately not implemented: a true *duress* code
+  (one that still arms/disarms normally but silently alerts) — Alarmo
+  already supports this natively via a dedicated user with its own
+  code plus its own Actions, which works from any way of
+  arming/disarming, not just this one keypad. Set it up there instead.
 
 ## Alarmo integration notes
 
@@ -218,6 +261,31 @@ integration needs touching again:
   for the instant it was sent; the flash is just visible because
   ordering is now strict. Not present under the old `parallel` mode,
   where the arm command usually won the race to the keypad instead.
+
+## Blueprint-authoring pitfalls hit along the way
+
+Specific to writing blueprints with optional user-supplied actions
+(like the Special code actions above) — not Alarmo-specific, but cost
+real debugging time and will bite again if a new optional action input
+is ever added:
+
+- **An `!input` resolving to an action list cannot sit as one item in
+  a `sequence:` list alongside other predefined actions.** Writing
+  `- !input special_code_1_action` followed by more steps in the same
+  sequence causes Home Assistant to mishandle it (a known, documented
+  limitation — "Message malformed: Unable to determine action" in some
+  versions, silently not running in others). It only works cleanly
+  when the entire `sequence:` *is* the input with nothing else in it.
+  To combine a user-supplied action with other steps, wrap it: `-
+  sequence: !input special_code_1_action` as its own step — the native
+  `sequence:` grouping action exists specifically for this.
+- **A plain `text` selector doesn't guarantee its value stays a
+  string.** If the user's input is all digits, it can end up stored as
+  a YAML-native integer rather than a string, and `"1234" == 1234` is
+  `False` in Jinja with no implicit coercion — so a code comparison
+  can silently never match. Fix: coerce both sides explicitly with `|
+  string` in the comparison (`keypad_code | string == special_code_1 |
+  string`), regardless of which side actually ends up mistyped.
 
 ## Known limitations
 
