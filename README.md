@@ -1,6 +1,6 @@
 # Frient / Develco KEPZB-110 custom ZHA quirk
 
-Target: Home Assistant 2026.8.x, used with Alarmo.
+Target: Home Assistant 2026.9.x, used with Alarmo.
 
 The supplied device signature is:
 
@@ -34,22 +34,18 @@ needs the device already reporting through the new quirk.
    folder first if it doesn't exist yet).
 3. Restart Home Assistant. Quirks are only loaded at ZHA startup —
    reloading the ZHA integration alone is not enough.
-4. After restart, verify the entities actually exist using Developer
-   Tools → Template rather than the device page's summary view — the
-   device page groups entities into sections that can make some look
-   entirely absent when they're actually just disabled or, if a quirk
-   is genuinely broken (see "Entity architecture" below), missing for
-   real:
+4. After restart, confirm entities using Developer Tools → Template
+   rather than the device page's summary view, which groups entities
+   into sections that can make some look absent when they're actually
+   just disabled:
    ```
    {{ device_entities('<this device's device_id>') }}
    ```
-   You should see five entities: Last keypad action, Keypad state,
-   Keypad delay remaining, Keypad alarm status, and Tamper — alongside
-   whatever standard ones (Battery, Identify, Firmware) are always
-   present regardless of any quirk. If the five custom ones are
-   missing, check Settings → System → Logs for a quirk load error
-   before going further — the blueprint will have nothing to listen to
-   otherwise.
+   You should see a Tamper entity, alongside whatever standard ones
+   (Battery, Identify, Firmware, LQI, RSSI) are always present
+   regardless of any quirk. If Tamper is missing, check Settings →
+   System → Logs for a quirk load error before going further — the
+   blueprint will have nothing to listen to otherwise.
 
 ### 2. Blueprint
 
@@ -73,8 +69,7 @@ needs the device already reporting through the new quirk.
 
 The native ZHA `alarm_control_panel` entity for this device is
 suppressed. Instead, the quirk converts two incoming keypad commands
-into `zha_event`, and exposes a handful of diagnostic sensors updated
-from whatever IAS ACE responses the device receives:
+into `zha_event`:
 
 - **Arm** (button press on the keypad) → `keypad_arm` event
 - **Get Panel Status** (fired routinely to refresh the display — on
@@ -83,35 +78,16 @@ from whatever IAS ACE responses the device receives:
 
 The blueprint listens for both, drives Alarmo accordingly, and replies
 over Zigbee with the matching IAS ACE command (`ArmResponse`,
-`PanelStatusChanged`, or `PanelStatusResponse`).
-
-**Entity architecture, and a real bug this hit:** real ACE traffic
-only ever arrives on the client-role cluster instance (the one
-`.replaces()` swaps in), but `.sensor()`/`.binary_sensor()` entity
-metadata can only attach to a **server-role** cluster instance —
-attaching it to the client-role one (as an earlier version of this
-quirk did) causes ZHA to silently create *no entity at all*, with no
-exception anywhere. Confirmed by directly inspecting ZHA's quirk
-registry and entity-discovery code, and cross-checked against two
-other manufacturers' quirks in the official zha-quirks library that
-use the same fix. The fix: `.adds()` a second, purely-local instance
-of the same class as a server-role cluster (the device never actually
-talks to it — it only exists to host entity values), and the real
-command handler pushes every update into that sibling too. If you
-ever add a new manufacturer-specific attribute here, point its
-`.sensor()`/etc. entry at the plain `cluster_id` with no
-`cluster_type` override (defaults to Server, matching the sibling),
-not at the client-role instance.
+`PanelStatusChanged`, or `PanelStatusResponse`). Neither the blueprint
+nor anything else depends on any entity beyond Tamper — see "Known
+limitations" for why there isn't more.
 
 ## Entities
 
-- Last keypad action
-- Keypad state
-- Keypad delay remaining
-- Keypad alarm status
 - Tamper binary sensor
 
-The PIN is deliberately not exposed as an entity or written to any
+No keypad-state diagnostic entities are exposed (see "Known
+limitations"). The PIN is never exposed as an entity or written to any
 entity state.
 
 ## Entity cleanup
@@ -289,6 +265,29 @@ is ever added:
 
 ## Known limitations
 
+- **No keypad-state diagnostic entities** (last action, panel state,
+  delay remaining, alarm status) — an earlier version exposed these as
+  manufacturer-specific attributes on a second, fabricated server-role
+  cluster instance (needed because entity metadata can only attach to
+  server-role clusters, but real ACE traffic only ever arrives on the
+  client-role one). That fix was verified correct in isolation — a
+  standalone simulation of this exact device signature, run through
+  the real entity-discovery code, produced all 5 entities cleanly. But
+  on the real device, only 1 of the 5 attributes ever showed up in
+  ZHA's own diagnostics (`last_action`, and only after it had actually
+  been set by a real keypad press — not even at its `__init__`
+  default), and no entities beyond Tamper were ever created. Checked
+  and ruled out: stale/duplicate quirk files, `zha`/`zha-quirks`
+  version mismatch (both confirmed identical to the test environment
+  at 2.2.2), and a missing/misconfigured cluster on the resolved
+  device (confirmed present and correctly typed via device diagnostics
+  and a from-scratch simulation). Not ruled out: an unpinned `zigpy`
+  version mismatch, or something specific to the real HAOS container
+  environment that a standalone simulation can't reproduce. Root cause
+  not found; not worth chasing further since nothing actually depends
+  on these entities. If revisiting: the diagnostic download from the
+  device's own page (not the ZHA integration's page) is the most
+  detailed source of truth — richer than logs or the device page UI.
 - The ~30 second solid-red LED confirmation the keypad shows
   immediately after any arm button press appears to be a fixed local
   firmware timeout. Nothing in the technical manual, the ZCL spec, or
