@@ -1,6 +1,6 @@
 # Frient / Develco KEPZB-110 custom ZHA quirk
 
-Target: Home Assistant 2026.8.x, used with Alarmo.
+Target: Home Assistant 2026.9.x, used with Alarmo.
 
 The supplied device signature is:
 
@@ -34,12 +34,18 @@ needs the device already reporting through the new quirk.
    folder first if it doesn't exist yet).
 3. Restart Home Assistant. Quirks are only loaded at ZHA startup —
    reloading the ZHA integration alone is not enough.
-4. After restart, open the KEPZB-110 device page and confirm: no
-   native `alarm_control_panel` entity, and the five entities listed
-   below (Last keypad action, Keypad state, Keypad delay remaining,
-   Keypad alarm status, Tamper) are present. If they're missing,
-   check Settings → System → Logs for a quirk load error before going
-   further — the blueprint will have nothing to listen to otherwise.
+4. After restart, confirm entities using Developer Tools → Template
+   rather than the device page's summary view, which groups entities
+   into sections that can make some look absent when they're actually
+   just disabled:
+   ```
+   {{ device_entities('<this device's device_id>') }}
+   ```
+   You should see a Tamper entity, alongside whatever standard ones
+   (Battery, Identify, Firmware, LQI, RSSI) are always present
+   regardless of any quirk. If Tamper is missing, check Settings →
+   System → Logs for a quirk load error before going further — the
+   blueprint will have nothing to listen to otherwise.
 
 ### 2. Blueprint
 
@@ -63,8 +69,7 @@ needs the device already reporting through the new quirk.
 
 The native ZHA `alarm_control_panel` entity for this device is
 suppressed. Instead, the quirk converts two incoming keypad commands
-into `zha_event`, and exposes a handful of diagnostic sensors updated
-from whatever IAS ACE responses the device receives:
+into `zha_event`:
 
 - **Arm** (button press on the keypad) → `keypad_arm` event
 - **Get Panel Status** (fired routinely to refresh the display — on
@@ -73,17 +78,16 @@ from whatever IAS ACE responses the device receives:
 
 The blueprint listens for both, drives Alarmo accordingly, and replies
 over Zigbee with the matching IAS ACE command (`ArmResponse`,
-`PanelStatusChanged`, or `PanelStatusResponse`).
+`PanelStatusChanged`, or `PanelStatusResponse`). Neither the blueprint
+nor anything else depends on any entity beyond Tamper — see "Known
+limitations" for why there isn't more.
 
 ## Entities
 
-- Last keypad action
-- Keypad state
-- Keypad delay remaining
-- Keypad alarm status
 - Tamper binary sensor
 
-The PIN is deliberately not exposed as an entity or written to any
+No keypad-state diagnostic entities are exposed (see "Known
+limitations"). The PIN is never exposed as an entity or written to any
 entity state.
 
 ## Entity cleanup
@@ -129,6 +133,21 @@ transaction: <ZCL transaction sequence number>
   events can be matched back to the keypad that issued the request.
   Only matters if you run more than one instance (e.g. more than one
   physical keypad); each instance needs a different value.
+- **Special code 1 / Special code 2, each with an action** — optional.
+  If the code entered on the keypad matches one of these exactly,
+  Alarmo is never called at all (arming/disarming is skipped for that
+  attempt) and only the paired action runs instead — e.g. a code that
+  opens the garage door rather than arming/disarming anything. A
+  direct Arm Response reflecting Alarmo's actual, unchanged current
+  status is still sent back, so the keypad doesn't hang waiting for a
+  reply to the Arm command it sent. Leave a code blank to disable that
+  slot; an empty code can never match, even if the real keypad also
+  sends an empty code (e.g. when no code is required by Alarmo).
+  Considered and deliberately not implemented: a true *duress* code
+  (one that still arms/disarms normally but silently alerts) — Alarmo
+  already supports this natively via a dedicated user with its own
+  code plus its own Actions, which works from any way of
+  arming/disarming, not just this one keypad. Set it up there instead.
 
 ## Alarmo integration notes
 
@@ -219,8 +238,56 @@ integration needs touching again:
   ordering is now strict. Not present under the old `parallel` mode,
   where the arm command usually won the race to the keypad instead.
 
+## Blueprint-authoring pitfalls hit along the way
+
+Specific to writing blueprints with optional user-supplied actions
+(like the Special code actions above) — not Alarmo-specific, but cost
+real debugging time and will bite again if a new optional action input
+is ever added:
+
+- **An `!input` resolving to an action list cannot sit as one item in
+  a `sequence:` list alongside other predefined actions.** Writing
+  `- !input special_code_1_action` followed by more steps in the same
+  sequence causes Home Assistant to mishandle it (a known, documented
+  limitation — "Message malformed: Unable to determine action" in some
+  versions, silently not running in others). It only works cleanly
+  when the entire `sequence:` *is* the input with nothing else in it.
+  To combine a user-supplied action with other steps, wrap it: `-
+  sequence: !input special_code_1_action` as its own step — the native
+  `sequence:` grouping action exists specifically for this.
+- **A plain `text` selector doesn't guarantee its value stays a
+  string.** If the user's input is all digits, it can end up stored as
+  a YAML-native integer rather than a string, and `"1234" == 1234` is
+  `False` in Jinja with no implicit coercion — so a code comparison
+  can silently never match. Fix: coerce both sides explicitly with `|
+  string` in the comparison (`keypad_code | string == special_code_1 |
+  string`), regardless of which side actually ends up mistyped.
+
 ## Known limitations
 
+- **No keypad-state diagnostic entities** (last action, panel state,
+  delay remaining, alarm status) — an earlier version exposed these as
+  manufacturer-specific attributes on a second, fabricated server-role
+  cluster instance (needed because entity metadata can only attach to
+  server-role clusters, but real ACE traffic only ever arrives on the
+  client-role one). That fix was verified correct in isolation — a
+  standalone simulation of this exact device signature, run through
+  the real entity-discovery code, produced all 5 entities cleanly. But
+  on the real device, only 1 of the 5 attributes ever showed up in
+  ZHA's own diagnostics (`last_action`, and only after it had actually
+  been set by a real keypad press — not even at its `__init__`
+  default), and no entities beyond Tamper were ever created. Checked
+  and ruled out: stale/duplicate quirk files, `zha`/`zha-quirks`
+  version mismatch (both confirmed identical to the test environment
+  at 2.2.2), and a missing/misconfigured cluster on the resolved
+  device (confirmed present and correctly typed via device diagnostics
+  and a from-scratch simulation). Not ruled out: an unpinned `zigpy`
+  version mismatch, or something specific to the real HAOS container
+  environment that a standalone simulation can't reproduce. Root cause
+  not found; not worth chasing further since nothing actually depends
+  on these entities. If revisiting: the diagnostic download from the
+  device's own page (not the ZHA integration's page) is the most
+  detailed source of truth — richer than logs or the device page UI.
 - The ~30 second solid-red LED confirmation the keypad shows
   immediately after any arm button press appears to be a fixed local
   firmware timeout. Nothing in the technical manual, the ZCL spec, or

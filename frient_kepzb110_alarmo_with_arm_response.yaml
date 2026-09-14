@@ -70,6 +70,42 @@ blueprint:
           max: 9999
           mode: box
 
+    special_code_1:
+      name: Special code 1
+      description: >
+        Optional. If the code entered on the keypad matches this exactly,
+        it is NOT forwarded to Alarmo — arming/disarming is skipped
+        entirely for that attempt — and only the action below runs
+        instead. Leave blank to disable.
+      default: ""
+      selector:
+        text:
+          type: password
+
+    special_code_1_action:
+      name: Special code 1 action
+      description: What to run when special code 1 above is entered.
+      default: []
+      selector:
+        action: {}
+
+    special_code_2:
+      name: Special code 2
+      description: >
+        Optional. Same behavior as special code 1, for a second,
+        distinct code.
+      default: ""
+      selector:
+        text:
+          type: password
+
+    special_code_2_action:
+      name: Special code 2 action
+      description: What to run when special code 2 above is entered.
+      default: []
+      selector:
+        action: {}
+
 mode: queued
 max: 10
 
@@ -79,6 +115,8 @@ variables:
   vacation_mode: !input vacation_mode
   custom_mode: !input custom_mode
   keypad_id: !input keypad_id
+  special_code_1: !input special_code_1
+  special_code_2: !input special_code_2
 
 trigger:
   # KEYPAD -> ALARMO
@@ -141,48 +179,169 @@ action:
                 {{ trigger.event.data.args.code | default('', true) }}
 
           - choose:
+              # ------------------------------------------------------
+              # SPECIAL ACTION CODES — not forwarded to Alarmo at all.
+              # Alarmo never sees these attempts, so there's no
+              # alarmo_command_success/alarmo_failed_to_arm to reply
+              # to; reply here directly with an Arm Response reflecting
+              # Alarmo's current (unchanged) state, so the keypad still
+              # gets a sensible answer to the Arm command it sent.
+              # ------------------------------------------------------
               - conditions:
                   - condition: template
-                    value_template: "{{ keypad_action == 'disarm' }}"
+                    value_template: >
+                      {{ special_code_1 | string != '' and keypad_code | string == special_code_1 | string }}
                 sequence:
-                  - action: alarmo.disarm
+                  - sequence: !input special_code_1_action
+
+                  - variables:
+                      arm_notification: >
+                        {% set s = states(alarmo_entity) %}
+                        {% if s == 'disarmed' %}
+                          0
+                        {% elif s == 'armed_home' %}
+                          1
+                        {% elif s == 'armed_night' %}
+                          2
+                        {% elif s == 'armed_away' %}
+                          3
+                        {% elif s == 'armed_vacation' %}
+                          {% if vacation_mode == 'arm_day_zones' %}1
+                          {% elif vacation_mode == 'arm_night_zones' %}2
+                          {% else %}3
+                          {% endif %}
+                        {% elif s in ['armed_custom_bypass', 'armed_custom'] %}
+                          {% if custom_mode == 'arm_day_zones' %}1
+                          {% elif custom_mode == 'arm_night_zones' %}2
+                          {% else %}3
+                          {% endif %}
+                        {% else %}
+                          5
+                        {% endif %}
+                      keypad_ieee: >
+                        {% set ns = namespace(ieee='') %}
+                        {% for identifier in device_attr(keypad_device, 'identifiers') | default([]) %}
+                          {% if identifier[0] == 'zha' %}
+                            {% set ns.ieee = identifier[1] %}
+                          {% endif %}
+                        {% endfor %}
+                        {{ ns.ieee }}
+
+                  - condition: template
+                    value_template: "{{ keypad_ieee != '' }}"
+
+                  - action: zha.issue_zigbee_cluster_command
                     data:
-                      entity_id: !input alarmo
-                      code: "{{ keypad_code }}"
-                      context_id: "{{ keypad_id | int }}"
+                      ieee: "{{ keypad_ieee }}"
+                      endpoint_id: 44
+                      cluster_id: 1281
+                      cluster_type: out
+                      command: 0
+                      command_type: client
+                      params:
+                        arm_notification: "{{ arm_notification | int(5) }}"
 
               - conditions:
                   - condition: template
-                    value_template: "{{ keypad_action == 'arm_day_zones' }}"
+                    value_template: >
+                      {{ special_code_2 | string != '' and keypad_code | string == special_code_2 | string }}
                 sequence:
-                  - action: alarmo.arm
-                    data:
-                      entity_id: !input alarmo
-                      mode: home
-                      code: "{{ keypad_code }}"
-                      context_id: "{{ keypad_id | int }}"
+                  - sequence: !input special_code_2_action
 
-              - conditions:
-                  - condition: template
-                    value_template: "{{ keypad_action == 'arm_night_zones' }}"
-                sequence:
-                  - action: alarmo.arm
-                    data:
-                      entity_id: !input alarmo
-                      mode: night
-                      code: "{{ keypad_code }}"
-                      context_id: "{{ keypad_id | int }}"
+                  - variables:
+                      arm_notification: >
+                        {% set s = states(alarmo_entity) %}
+                        {% if s == 'disarmed' %}
+                          0
+                        {% elif s == 'armed_home' %}
+                          1
+                        {% elif s == 'armed_night' %}
+                          2
+                        {% elif s == 'armed_away' %}
+                          3
+                        {% elif s == 'armed_vacation' %}
+                          {% if vacation_mode == 'arm_day_zones' %}1
+                          {% elif vacation_mode == 'arm_night_zones' %}2
+                          {% else %}3
+                          {% endif %}
+                        {% elif s in ['armed_custom_bypass', 'armed_custom'] %}
+                          {% if custom_mode == 'arm_day_zones' %}1
+                          {% elif custom_mode == 'arm_night_zones' %}2
+                          {% else %}3
+                          {% endif %}
+                        {% else %}
+                          5
+                        {% endif %}
+                      keypad_ieee: >
+                        {% set ns = namespace(ieee='') %}
+                        {% for identifier in device_attr(keypad_device, 'identifiers') | default([]) %}
+                          {% if identifier[0] == 'zha' %}
+                            {% set ns.ieee = identifier[1] %}
+                          {% endif %}
+                        {% endfor %}
+                        {{ ns.ieee }}
 
-              - conditions:
                   - condition: template
-                    value_template: "{{ keypad_action == 'arm_all_zones' }}"
-                sequence:
-                  - action: alarmo.arm
+                    value_template: "{{ keypad_ieee != '' }}"
+
+                  - action: zha.issue_zigbee_cluster_command
                     data:
-                      entity_id: !input alarmo
-                      mode: away
-                      code: "{{ keypad_code }}"
-                      context_id: "{{ keypad_id | int }}"
+                      ieee: "{{ keypad_ieee }}"
+                      endpoint_id: 44
+                      cluster_id: 1281
+                      cluster_type: out
+                      command: 0
+                      command_type: client
+                      params:
+                        arm_notification: "{{ arm_notification | int(5) }}"
+
+            default:
+              # ------------------------------------------------------
+              # Normal dispatch to Alarmo.
+              # ------------------------------------------------------
+              - choose:
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ keypad_action == 'disarm' }}"
+                    sequence:
+                      - action: alarmo.disarm
+                        data:
+                          entity_id: !input alarmo
+                          code: "{{ keypad_code }}"
+                          context_id: "{{ keypad_id | int }}"
+
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ keypad_action == 'arm_day_zones' }}"
+                    sequence:
+                      - action: alarmo.arm
+                        data:
+                          entity_id: !input alarmo
+                          mode: home
+                          code: "{{ keypad_code }}"
+                          context_id: "{{ keypad_id | int }}"
+
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ keypad_action == 'arm_night_zones' }}"
+                    sequence:
+                      - action: alarmo.arm
+                        data:
+                          entity_id: !input alarmo
+                          mode: night
+                          code: "{{ keypad_code }}"
+                          context_id: "{{ keypad_id | int }}"
+
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ keypad_action == 'arm_all_zones' }}"
+                    sequence:
+                      - action: alarmo.arm
+                        data:
+                          entity_id: !input alarmo
+                          mode: away
+                          code: "{{ keypad_code }}"
+                          context_id: "{{ keypad_id | int }}"
 
       # ============================================================
       # ALARMO COMMAND SUCCESS -> IAS ACE ARM RESPONSE
