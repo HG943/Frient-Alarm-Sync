@@ -106,13 +106,14 @@ blueprint:
       selector:
         action: {}
 
-    panic_action:
-      name: Panic (SOS) action
+    emergency_action:
+      name: Emergency (SOS) action
       description: >
-        Runs whenever the keypad's Panic button is pressed. No reply is
-        sent back to the keypad for this — there's no IAS ACE response
-        defined for it, so this is fire-and-forget. Leave empty to do
-        nothing.
+        Runs whenever the keypad's Emergency button is pressed — the
+        only SOS-style button this keypad has (no separate fire or
+        panic button exists on this hardware). No reply is sent back
+        to the keypad for this — there's no IAS ACE response defined
+        for it, so this is fire-and-forget. Leave empty to do nothing.
       default: []
       selector:
         action: {}
@@ -170,12 +171,12 @@ trigger:
     event_data:
       command: keypad_get_panel_status
 
-  # KEYPAD -> PANIC (SOS button)
-  - id: keypad_panic
+  # KEYPAD -> EMERGENCY (SOS button)
+  - id: keypad_emergency
     platform: event
     event_type: zha_event
     event_data:
-      command: keypad_panic
+      command: keypad_emergency
 
 action:
   - choose:
@@ -676,16 +677,16 @@ action:
                 alarm_status: "{{ alarm_status | int(0) }}"
 
       # ============================================================
-      # KEYPAD PANIC (SOS button) -> USER-DEFINED ACTION
+      # KEYPAD EMERGENCY (SOS button) -> USER-DEFINED ACTION
       #
       # Fire-and-forget: no IAS ACE response is defined for this
       # command, so nothing is sent back to the keypad.
       # ============================================================
       - conditions:
           - condition: trigger
-            id: keypad_panic
+            id: keypad_emergency
           - condition: template
             value_template: >
               {{ trigger.event.data.device_id | string == keypad_device | string }}
         sequence:
-          - sequence: !input panic_action
+          - sequence: !input emergency_action

@@ -120,32 +120,33 @@ command: keypad_get_panel_status
 transaction: <ZCL transaction sequence number>
 ```
 
-### `keypad_emergency` / `keypad_fire` / `keypad_panic`
+### `keypad_emergency`
 
-Fired when the keypad's corresponding SOS-style button is pressed. No
-IAS ACE response is defined for these commands (unlike `arm`/
-`get_panel_status`), so nothing needs to be sent back to the keypad —
-these are fire-and-forget from the keypad's own perspective. Not
-currently wired to anything in the blueprint; react to them with a
-separate automation (`zha_event`, `command: keypad_emergency` etc.).
+Fired when the keypad's Emergency (SOS) button is pressed — the only
+SOS-style button this keypad has; fire and panic don't exist on this
+hardware (see `keypad_unhandled_command` below for how that's covered
+if that assumption is ever wrong). No IAS ACE response is defined for
+this command (unlike `arm`/`get_panel_status`), so nothing needs to be
+sent back to the keypad — it's fire-and-forget from the keypad's own
+perspective. Wired into the blueprint's Emergency action input.
 
 ```yaml
-command: keypad_emergency  # or keypad_fire / keypad_panic
+command: keypad_emergency
 transaction: <ZCL transaction sequence number>
 ```
 
 ### `keypad_unhandled_command`
 
-Catch-all for any incoming IAS ACE command not covered above. This
-device's remaining possible commands — `bypass`, `get_zone_id_map`,
-`get_zone_info`, `get_bypassed_zone_list`, `get_zone_status` — are all
-zone-management commands for a fuller ACE client with a zone list/
-display. This keypad has neither, and the manufacturer's manual never
-mentions a bypass button, so they're believed unreachable from the
-hardware — unverified, which is exactly why this catch-all exists
-rather than leaving them silently unhandled. If this event ever fires,
-that belief was wrong; `zcl_command` names which one arrived so it can
-be added properly.
+Catch-all for any incoming IAS ACE command not covered above,
+including fire/panic (this keypad has no buttons for either) as well
+as the zone-management commands a fuller ACE client with a zone list/
+display would use — `bypass`, `get_zone_id_map`, `get_zone_info`,
+`get_bypassed_zone_list`, `get_zone_status`. This keypad has no screen
+and the manufacturer's manual never mentions a bypass button, so all
+of these are believed unreachable from the hardware — unverified,
+which is exactly why this catch-all exists rather than leaving them
+silently unhandled. If this event ever fires, one of those beliefs was
+wrong; `zcl_command` names which command actually arrived.
 
 ```yaml
 command: keypad_unhandled_command
@@ -181,13 +182,12 @@ transaction: <ZCL transaction sequence number>
   already supports this natively via a dedicated user with its own
   code plus its own Actions, which works from any way of
   arming/disarming, not just this one keypad. Set it up there instead.
-- **Panic action** — optional. Runs whenever the keypad's Panic
-  button is pressed (the `keypad_panic` event). Fire-and-forget, same
-  as the quirk's own handling of it — no IAS ACE response exists for
-  this command, so nothing is sent back to the keypad. Leave empty to
-  do nothing. `keypad_emergency` and `keypad_fire` fire the same way
-  from the quirk but aren't wired into the blueprint (yet) — add a
-  matching trigger/input pair the same way if wanted.
+- **Emergency action** — optional. Runs whenever the keypad's
+  Emergency (SOS) button is pressed (the `keypad_emergency` event) —
+  the only SOS-style button this keypad has. Fire-and-forget, same as
+  the quirk's own handling of it — no IAS ACE response exists for this
+  command, so nothing is sent back to the keypad. Leave empty to do
+  nothing.
 
 ## Alarmo integration notes
 
