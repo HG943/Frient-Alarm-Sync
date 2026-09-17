@@ -27,34 +27,6 @@ blueprint:
             - integration: alarmo
               domain: alarm_control_panel
 
-    vacation_mode:
-      name: Keypad mode for Alarmo vacation
-      description: How armed_vacation is represented on the three-mode keypad.
-      default: arm_all_zones
-      selector:
-        select:
-          options:
-            - label: Arm all zones (Away)
-              value: arm_all_zones
-            - label: Arm day zones (Home)
-              value: arm_day_zones
-            - label: Arm night zones (Night)
-              value: arm_night_zones
-
-    custom_mode:
-      name: Keypad mode for Alarmo custom
-      description: How armed_custom_bypass is represented on the three-mode keypad.
-      default: arm_all_zones
-      selector:
-        select:
-          options:
-            - label: Arm all zones (Away)
-              value: arm_all_zones
-            - label: Arm day zones (Home)
-              value: arm_day_zones
-            - label: Arm night zones (Night)
-              value: arm_night_zones
-
     keypad_id:
       name: Keypad instance ID
       description: >
@@ -124,8 +96,6 @@ max: 10
 variables:
   keypad_device: !input keypad
   alarmo_entity: !input alarmo
-  vacation_mode: !input vacation_mode
-  custom_mode: !input custom_mode
   keypad_id: !input keypad_id
   special_code_1: !input special_code_1
   special_code_2: !input special_code_2
@@ -224,16 +194,8 @@ action:
                           2
                         {% elif s == 'armed_away' %}
                           3
-                        {% elif s == 'armed_vacation' %}
-                          {% if vacation_mode == 'arm_day_zones' %}1
-                          {% elif vacation_mode == 'arm_night_zones' %}2
-                          {% else %}3
-                          {% endif %}
-                        {% elif s in ['armed_custom_bypass', 'armed_custom'] %}
-                          {% if custom_mode == 'arm_day_zones' %}1
-                          {% elif custom_mode == 'arm_night_zones' %}2
-                          {% else %}3
-                          {% endif %}
+                        {% elif s in ['armed_vacation', 'armed_custom_bypass', 'armed_custom'] %}
+                          3
                         {% else %}
                           5
                         {% endif %}
@@ -278,16 +240,8 @@ action:
                           2
                         {% elif s == 'armed_away' %}
                           3
-                        {% elif s == 'armed_vacation' %}
-                          {% if vacation_mode == 'arm_day_zones' %}1
-                          {% elif vacation_mode == 'arm_night_zones' %}2
-                          {% else %}3
-                          {% endif %}
-                        {% elif s in ['armed_custom_bypass', 'armed_custom'] %}
-                          {% if custom_mode == 'arm_day_zones' %}1
-                          {% elif custom_mode == 'arm_night_zones' %}2
-                          {% else %}3
-                          {% endif %}
+                        {% elif s in ['armed_vacation', 'armed_custom_bypass', 'armed_custom'] %}
+                          3
                         {% else %}
                           5
                         {% endif %}
@@ -385,16 +339,8 @@ action:
                   2
                 {% elif trigger.event.data.mode == 'away' %}
                   3
-                {% elif trigger.event.data.mode == 'vacation' %}
-                  {% if vacation_mode == 'arm_day_zones' %}1
-                  {% elif vacation_mode == 'arm_night_zones' %}2
-                  {% else %}3
-                  {% endif %}
-                {% elif trigger.event.data.mode == 'custom' %}
-                  {% if custom_mode == 'arm_day_zones' %}1
-                  {% elif custom_mode == 'arm_night_zones' %}2
-                  {% else %}3
-                  {% endif %}
+                {% elif trigger.event.data.mode in ['vacation', 'custom'] %}
+                  3
                 {% else %}
                   6
                 {% endif %}
@@ -507,16 +453,8 @@ action:
                   2
                 {% elif alarm_state == 'armed_away' %}
                   3
-                {% elif alarm_state == 'armed_vacation' %}
-                  {% if vacation_mode == 'arm_day_zones' %}1
-                  {% elif vacation_mode == 'arm_night_zones' %}2
-                  {% else %}3
-                  {% endif %}
-                {% elif alarm_state in ['armed_custom_bypass', 'armed_custom'] %}
-                  {% if custom_mode == 'arm_day_zones' %}1
-                  {% elif custom_mode == 'arm_night_zones' %}2
-                  {% else %}3
-                  {% endif %}
+                {% elif alarm_state in ['armed_vacation', 'armed_custom_bypass', 'armed_custom'] %}
+                  3
                 {% elif alarm_state == 'arming' %}
                   4
                 {% elif alarm_state == 'pending' %}
@@ -610,16 +548,8 @@ action:
                   2
                 {% elif alarm_state == 'armed_away' %}
                   3
-                {% elif alarm_state == 'armed_vacation' %}
-                  {% if vacation_mode == 'arm_day_zones' %}1
-                  {% elif vacation_mode == 'arm_night_zones' %}2
-                  {% else %}3
-                  {% endif %}
-                {% elif alarm_state in ['armed_custom_bypass', 'armed_custom'] %}
-                  {% if custom_mode == 'arm_day_zones' %}1
-                  {% elif custom_mode == 'arm_night_zones' %}2
-                  {% else %}3
-                  {% endif %}
+                {% elif alarm_state in ['armed_vacation', 'armed_custom_bypass', 'armed_custom'] %}
+                  3
                 {% elif alarm_state == 'arming' %}
                   4
                 {% elif alarm_state == 'pending' %}
