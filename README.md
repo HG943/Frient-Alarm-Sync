@@ -55,9 +55,9 @@ needs the device already reporting through the new quirk.
    directly.
 2. From the imported blueprint, select **Create automation**.
 3. Fill in the inputs (see below for what each one means): Keypad
-   device, Alarmo entity, Vacation mode, Custom mode, and Keypad ID
-   (leave at the default `1` unless you're setting up more than one
-   keypad — see the Keypad ID note below).
+   device, Alarmo entity, and Keypad ID (leave at the default `1`
+   unless you're setting up more than one keypad — see the Keypad ID
+   note below).
 4. Save and name the automation.
 5. Test end to end: press an arm button on the keypad and confirm it
    both arms Alarmo and shows the correct LED response. If arming
@@ -158,10 +158,6 @@ transaction: <ZCL transaction sequence number>
 
 - **Keypad device** — the KEPZB-110 device entry.
 - **Alarmo entity** — the `alarm_control_panel.*` entity from Alarmo.
-- **Vacation mode / Custom mode** — since the keypad only has three
-  physical arm buttons (home/night/away), these pick which of the
-  three the `armed_vacation` and `armed_custom_bypass` Alarmo states
-  are represented as on the keypad's LEDs.
 - **Keypad ID** — a small integer unique to this blueprint instance.
   Passed to Alarmo as `context_id` so the resulting success/failure
   events can be matched back to the keypad that issued the request.
@@ -188,6 +184,16 @@ transaction: <ZCL transaction sequence number>
   the quirk's own handling of it — no IAS ACE response exists for this
   command, so nothing is sent back to the keypad. Leave empty to do
   nothing.
+
+Alarmo's `armed_vacation` and `armed_custom_bypass`/`armed_custom`
+states unconditionally map to "away" (arm_all_zones) everywhere in the
+blueprint — there's no input for this, on purpose. An earlier version
+had a per-mode selector for each, but the keypad only has a single red
+LED for "armed", and the manufacturer's manual documents identical LED
+behavior for all three arm modes — so which of the three values gets
+sent has no visible or audible effect on this hardware. If a keypad
+with per-mode indication is ever used with this blueprint, that's
+worth reintroducing.
 
 ## Alarmo integration notes
 
