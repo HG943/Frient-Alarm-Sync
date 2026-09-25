@@ -163,21 +163,29 @@ transaction: <ZCL transaction sequence number>
   events can be matched back to the keypad that issued the request.
   Only matters if you run more than one instance (e.g. more than one
   physical keypad); each instance needs a different value.
-- **Special code 1 / Special code 2, each with an action** — optional.
-  If the code entered on the keypad matches one of these exactly,
-  Alarmo is never called at all (arming/disarming is skipped for that
-  attempt) and only the paired action runs instead — e.g. a code that
-  opens the garage door rather than arming/disarming anything. A
-  direct Arm Response reflecting Alarmo's actual, unchanged current
-  status is still sent back, so the keypad doesn't hang waiting for a
-  reply to the Arm command it sent. Leave a code blank to disable that
-  slot; an empty code can never match, even if the real keypad also
-  sends an empty code (e.g. when no code is required by Alarmo).
-  Considered and deliberately not implemented: a true *duress* code
-  (one that still arms/disarms normally but silently alerts) — Alarmo
-  already supports this natively via a dedicated user with its own
-  code plus its own Actions, which works from any way of
-  arming/disarming, not just this one keypad. Set it up there instead.
+- **Special code 1 / Special code 2, each with a forwarding toggle and
+  an action** — optional. If the code entered on the keypad matches
+  one of these exactly, the paired action always runs (e.g. a code
+  that opens the garage door). Whether Alarmo also gets the code
+  depends on the toggle:
+  - **Off (default)**: Alarmo is never called at all — arming/
+    disarming is skipped for that attempt, action only. A direct Arm
+    Response reflecting Alarmo's actual, unchanged current status is
+    sent back, so the keypad doesn't hang waiting for a reply to the
+    Arm command it sent.
+  - **On**: the code is also forwarded to Alarmo as normal, so a
+    single code both arms/disarms *and* triggers the action — e.g. a
+    duress-style code that disarms normally but silently alerts you.
+    Alarmo's own reply drives the keypad's response in this case, same
+    as any ordinary code.
+
+  Leave a code blank to disable that slot; an empty code can never
+  match, even if the real keypad also sends an empty code (e.g. when
+  no code is required by Alarmo). If you'd rather duress work from
+  *any* way of arming/disarming — not just this one keypad — Alarmo
+  supports that natively via a dedicated user with its own code plus
+  its own Actions; that's a broader-scoped alternative to using the
+  toggle here, not a replacement for it.
 - **Emergency action** — optional. Runs whenever the keypad's
   Emergency (SOS) button is pressed (the `keypad_emergency` event) —
   the only SOS-style button this keypad has. Fire-and-forget, same as
