@@ -45,14 +45,26 @@ blueprint:
     special_code_1:
       name: Special code 1
       description: >
-        Optional. If the code entered on the keypad matches this exactly,
-        it is NOT forwarded to Alarmo — arming/disarming is skipped
-        entirely for that attempt — and only the action below runs
-        instead. Leave blank to disable.
+        Optional. If the code entered on the keypad matches this
+        exactly, only the action below runs instead — unless "Forward
+        special code 1 to Alarmo" below is on, in which case the
+        action runs *and* arming/disarming proceeds normally with this
+        code. Leave blank to disable.
       default: ""
       selector:
         text:
           type: password
+
+    special_code_1_forward:
+      name: Forward special code 1 to Alarmo
+      description: >
+        Off (default): arming/disarming is skipped entirely when
+        special code 1 is entered — only the action runs. On: the code
+        is also forwarded to Alarmo as normal, so a single code can
+        both disarm (or arm) and trigger the action.
+      default: false
+      selector:
+        boolean: {}
 
     special_code_1_action:
       name: Special code 1 action
@@ -70,6 +82,13 @@ blueprint:
       selector:
         text:
           type: password
+
+    special_code_2_forward:
+      name: Forward special code 2 to Alarmo
+      description: Same behavior as the special code 1 toggle above.
+      default: false
+      selector:
+        boolean: {}
 
     special_code_2_action:
       name: Special code 2 action
@@ -98,7 +117,9 @@ variables:
   alarmo_entity: !input alarmo
   keypad_id: !input keypad_id
   special_code_1: !input special_code_1
+  special_code_1_forward: !input special_code_1_forward
   special_code_2: !input special_code_2
+  special_code_2_forward: !input special_code_2_forward
 
 trigger:
   # KEYPAD -> ALARMO
@@ -166,69 +187,50 @@ action:
                 {{ trigger.event.data.args.action | default('', true) }}
               keypad_code: >
                 {{ trigger.event.data.args.code | default('', true) }}
+              matched_special_code: >
+                {% if special_code_1 | string != '' and keypad_code | string == special_code_1 | string %}
+                  1
+                {% elif special_code_2 | string != '' and keypad_code | string == special_code_2 | string %}
+                  2
+                {% else %}
+                  0
+                {% endif %}
 
+          # ------------------------------------------------------
+          # SPECIAL ACTION CODES — run the matching action (if any)
+          # regardless of forwarding. Whether Alarmo also gets
+          # called is decided separately below, since it needs to
+          # share the normal-dispatch branch either way.
+          # ------------------------------------------------------
           - choose:
-              # ------------------------------------------------------
-              # SPECIAL ACTION CODES — not forwarded to Alarmo at all.
-              # Alarmo never sees these attempts, so there's no
-              # alarmo_command_success/alarmo_failed_to_arm to reply
-              # to; reply here directly with an Arm Response reflecting
-              # Alarmo's current (unchanged) state, so the keypad still
-              # gets a sensible answer to the Arm command it sent.
-              # ------------------------------------------------------
               - conditions:
                   - condition: template
-                    value_template: >
-                      {{ special_code_1 | string != '' and keypad_code | string == special_code_1 | string }}
+                    value_template: "{{ matched_special_code | int == 1 }}"
                 sequence:
                   - sequence: !input special_code_1_action
 
-                  - variables:
-                      arm_notification: >
-                        {% set s = states(alarmo_entity) %}
-                        {% if s == 'disarmed' %}
-                          0
-                        {% elif s == 'armed_home' %}
-                          1
-                        {% elif s == 'armed_night' %}
-                          2
-                        {% elif s == 'armed_away' %}
-                          3
-                        {% elif s in ['armed_vacation', 'armed_custom_bypass', 'armed_custom'] %}
-                          3
-                        {% else %}
-                          5
-                        {% endif %}
-                      keypad_ieee: >
-                        {% set ns = namespace(ieee='') %}
-                        {% for identifier in device_attr(keypad_device, 'identifiers') | default([]) %}
-                          {% if identifier[0] == 'zha' %}
-                            {% set ns.ieee = identifier[1] %}
-                          {% endif %}
-                        {% endfor %}
-                        {{ ns.ieee }}
-
-                  - condition: template
-                    value_template: "{{ keypad_ieee != '' }}"
-
-                  - action: zha.issue_zigbee_cluster_command
-                    data:
-                      ieee: "{{ keypad_ieee }}"
-                      endpoint_id: 44
-                      cluster_id: 1281
-                      cluster_type: out
-                      command: 0
-                      command_type: client
-                      params:
-                        arm_notification: "{{ arm_notification | int(5) }}"
-
               - conditions:
                   - condition: template
-                    value_template: >
-                      {{ special_code_2 | string != '' and keypad_code | string == special_code_2 | string }}
+                    value_template: "{{ matched_special_code | int == 2 }}"
                 sequence:
                   - sequence: !input special_code_2_action
 
+          - choose:
+              # ------------------------------------------------------
+              # A special code matched AND its forwarding toggle is
+              # off: skip Alarmo entirely for this attempt. Alarmo
+              # never sees it, so there's no alarmo_command_success/
+              # alarmo_failed_to_arm to reply to — reply here directly
+              # with an Arm Response reflecting Alarmo's current
+              # (unchanged) state, so the keypad still gets a sensible
+              # answer to the Arm command it sent.
+              # ------------------------------------------------------
+              - conditions:
+                  - condition: template
+                    value_template: >
+                      {{ (matched_special_code | int == 1 and not special_code_1_forward) or
+                         (matched_special_code | int == 2 and not special_code_2_forward) }}
+                sequence:
                   - variables:
                       arm_notification: >
                         {% set s = states(alarmo_entity) %}
@@ -270,7 +272,11 @@ action:
 
             default:
               # ------------------------------------------------------
-              # Normal dispatch to Alarmo.
+              # Normal dispatch to Alarmo — covers both no special
+              # code matching, and a special code matching with its
+              # forwarding toggle on (in which case its action already
+              # ran above, and this also arms/disarms with the same
+              # code).
               # ------------------------------------------------------
               - choose:
                   - conditions:
