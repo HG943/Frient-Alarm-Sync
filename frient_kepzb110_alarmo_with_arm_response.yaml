@@ -109,6 +109,101 @@ blueprint:
       selector:
         action: {}
 
+    arm_day_mode_default:
+      name: Home/Day button arm mode
+      description: >
+        The Alarmo arm mode this button normally uses. Change this if
+        you want a fixed, permanent override instead of "home" — no
+        helper entity required. Ignored on any press where the helper
+        below is set to a valid mode.
+      default: home
+      selector:
+        select:
+          options:
+            - "away"
+            - "home"
+            - "night"
+            - "vacation"
+            - "custom"
+
+    arm_day_mode_helper:
+      name: Home/Day button arm mode helper (optional)
+      description: >
+        Optional input_select used as a live toggle for which Alarmo
+        arm mode the keypad's Home/Day button triggers. Valid states:
+        away, home, night, vacation, custom. Read fresh on
+        every button press, so changing the helper's state takes
+        effect immediately — no need to touch this blueprint's
+        settings. Leave blank, or set the helper to anything else, to
+        fall back to the fixed mode set above.
+      default: ""
+      selector:
+        entity:
+          filter:
+            - domain: input_select
+
+    arm_night_mode_default:
+      name: Night button arm mode
+      description: >
+        Same as the Home/Day fixed mode above, but for the Night
+        button. Defaults to "night".
+      default: night
+      selector:
+        select:
+          options:
+            - "away"
+            - "home"
+            - "night"
+            - "vacation"
+            - "custom"
+
+    arm_night_mode_helper:
+      name: Night button arm mode helper (optional)
+      description: >
+        Same as the Home/Day helper above, but for the Night button.
+        Leave blank, or set the helper to anything else, to fall back
+        to the fixed mode set above.
+      default: ""
+      selector:
+        entity:
+          filter:
+            - domain: input_select
+
+    arm_away_mode_default:
+      name: Away button arm mode
+      description: >
+        Same as the Home/Day fixed mode above, but for the Away
+        button. Defaults to "away" — change this if you always want
+        this keypad's Away button to force-arm ("custom", the mode
+        behind Alarmo's "armed_custom_bypass" state) or use
+        "vacation" instead, with no helper entity needed.
+      default: away
+      selector:
+        select:
+          options:
+            - "away"
+            - "home"
+            - "night"
+            - "vacation"
+            - "custom"
+
+    arm_away_mode_helper:
+      name: Away button arm mode helper (optional)
+      description: >
+        Same as the Home/Day helper above, but for the Away button.
+        This is the one most people will want — e.g. point it at an
+        input_select so the Away button can be flipped between
+        normal "away" and "custom" (Alarmo's force-arm/bypass mode,
+        shown as the "armed_custom_bypass" state) or "vacation"
+        without editing this blueprint. Leave
+        blank, or set the helper to anything else, to fall back to
+        the fixed mode set above.
+      default: ""
+      selector:
+        entity:
+          filter:
+            - domain: input_select
+
 mode: queued
 max: 10
 
@@ -120,6 +215,22 @@ variables:
   special_code_1_forward: !input special_code_1_forward
   special_code_2: !input special_code_2
   special_code_2_forward: !input special_code_2_forward
+  arm_day_mode_default: !input arm_day_mode_default
+  arm_day_mode_helper: !input arm_day_mode_helper
+  arm_night_mode_default: !input arm_night_mode_default
+  arm_night_mode_helper: !input arm_night_mode_helper
+  arm_away_mode_default: !input arm_away_mode_default
+  arm_away_mode_helper: !input arm_away_mode_helper
+  valid_arm_modes: ["away", "home", "night", "vacation", "custom"]
+  arm_day_mode: >
+    {% set v = states(arm_day_mode_helper) if arm_day_mode_helper else '' %}
+    {{ v if v in valid_arm_modes else arm_day_mode_default }}
+  arm_night_mode: >
+    {% set v = states(arm_night_mode_helper) if arm_night_mode_helper else '' %}
+    {{ v if v in valid_arm_modes else arm_night_mode_default }}
+  arm_away_mode: >
+    {% set v = states(arm_away_mode_helper) if arm_away_mode_helper else '' %}
+    {{ v if v in valid_arm_modes else arm_away_mode_default }}
 
 trigger:
   # KEYPAD -> ALARMO
@@ -296,7 +407,7 @@ action:
                       - action: alarmo.arm
                         data:
                           entity_id: !input alarmo
-                          mode: home
+                          mode: "{{ arm_day_mode }}"
                           code: "{{ keypad_code }}"
                           context_id: "{{ keypad_id | int }}"
 
@@ -307,7 +418,7 @@ action:
                       - action: alarmo.arm
                         data:
                           entity_id: !input alarmo
-                          mode: night
+                          mode: "{{ arm_night_mode }}"
                           code: "{{ keypad_code }}"
                           context_id: "{{ keypad_id | int }}"
 
@@ -318,7 +429,7 @@ action:
                       - action: alarmo.arm
                         data:
                           entity_id: !input alarmo
-                          mode: away
+                          mode: "{{ arm_away_mode }}"
                           code: "{{ keypad_code }}"
                           context_id: "{{ keypad_id | int }}"
 

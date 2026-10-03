@@ -192,16 +192,44 @@ transaction: <ZCL transaction sequence number>
   the quirk's own handling of it — no IAS ACE response exists for this
   command, so nothing is sent back to the keypad. Leave empty to do
   nothing.
+- **Home/Day, Night, and Away button arm mode** — one dropdown per
+  button, each offering `away`, `home`, `night`, `vacation`, and
+  `custom` (Alarmo's force-arm/bypass mode — see note below on why
+  it's `custom` and not `custom_bypass`). Defaults to that button's
+  normal mode (`home` / `night` / `away`), but can be set to anything
+  else as a permanent, fixed override — no helper entity needed. Use
+  this if you just want e.g. the Away button to always force-arm
+  (`custom`) and never go back.
+- **Home/Day, Night, and Away button arm mode helpers** — optional,
+  one per button. Each points at an `input_select` (or any entity)
+  whose *state* is read fresh on every button press and, when it
+  holds a valid mode (`away`, `home`, `night`, `vacation`, `custom`),
+  overrides that button's fixed mode above for that one press. If a
+  helper is left blank, doesn't exist, or holds anything else, that
+  button falls back to its fixed mode above — so a misconfigured or
+  empty helper is always safe, and the helper is entirely optional:
+  leave all three blank to use fixed modes only.
 
-Alarmo's `armed_vacation` and `armed_custom_bypass`/`armed_custom`
-states unconditionally map to "away" (arm_all_zones) everywhere in the
-blueprint — there's no input for this, on purpose. An earlier version
-had a per-mode selector for each, but the keypad only has a single red
-LED for "armed", and the manufacturer's manual documents identical LED
-behavior for all three arm modes — so which of the three values gets
-sent has no visible or audible effect on this hardware. If a keypad
-with per-mode indication is ever used with this blueprint, that's
-worth reintroducing.
+  This is a live toggle, not a blueprint setting: flipping the
+  helper's state (e.g. from a dashboard, another automation, or a
+  schedule) changes what the button does on the *next* press, with no
+  need to touch this automation. The Away button is the one most
+  people will want this for — e.g. an `input_select` with options
+  `away` and `custom`, so the Away button can be switched to
+  force-arm over open/faulted sensors without a code change, or
+  `vacation` for a distinct "away for a while" mode if your Alarmo
+  config treats it differently (longer delays, different
+  notifications, etc.). The same mechanism is available on all three
+  buttons in case you want, say, the Night button to sometimes arm in
+  `custom` too.
+
+  Whichever mode actually gets used, the Arm Response and Panel
+  Status LED signaling don't need separate handling for it: the
+  keypad's single red LED shows identical behavior for `away`,
+  `vacation`, and `custom` alike (per the manufacturer's manual), so
+  all three already map to the same "armed" LED state
+  (`arm_notification`/`panel_status` value `3`) throughout the
+  blueprint, regardless of which one Alarmo is actually in.
 
 ## Alarmo integration notes
 
@@ -220,8 +248,12 @@ integration needs touching again:
   captured event. Templating against `arm_mode` silently fails and
   falls through to a default, with no error raised.
 - Alarmo's `custom` arm mode is literally `"custom"`, not
-  `"custom_bypass"` (that string is the Alarmo *state* name, not the
-  service/event mode value).
+  `"custom_bypass"` — that string is only the Alarmo *state* name
+  (`armed_custom_bypass`). This applies on **both** sides: the `mode`
+  value the `alarmo.arm` service itself expects (confirmed by testing
+  — calling it with `custom_bypass` fails/does nothing) and the
+  `mode` field on the `alarmo_command_success` event afterward. Only
+  the state name uses `custom_bypass`.
 - The `context_id` field Alarmo's `alarmo.arm`/`alarmo.disarm`
   services accept must be an **integer**. Passing HA's own automatic
   context ID (a ULID-like string) fails schema validation.
