@@ -42,6 +42,20 @@ blueprint:
           max: 9999
           mode: box
 
+    padlock_arm_mode:
+      name: Padlock button arm mode
+      description: >
+        Select the Alarmo arm mode to use when the padlock keypad button is pressed.
+      default: away
+      selector:
+        select:
+          options:
+            - label: Away
+              value: away
+            - label: Custom Bypass
+              value: custom
+          mode: dropdown
+
     special_code_1:
       name: Special code 1
       description: >
@@ -120,6 +134,7 @@ variables:
   special_code_1_forward: !input special_code_1_forward
   special_code_2: !input special_code_2
   special_code_2_forward: !input special_code_2_forward
+  padlock_arm_mode: !input padlock_arm_mode
 
 trigger:
   # KEYPAD -> ALARMO
@@ -318,7 +333,7 @@ action:
                       - action: alarmo.arm
                         data:
                           entity_id: !input alarmo
-                          mode: away
+                          mode: "{{ padlock_arm_mode }}"
                           code: "{{ keypad_code }}"
                           context_id: "{{ keypad_id | int }}"
 
