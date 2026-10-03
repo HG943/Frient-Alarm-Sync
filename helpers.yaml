@@ -1,0 +1,33 @@
+input_select:
+  keypad_arm_day_mode:
+    name: Keypad – Home/Day arm mode
+    icon: mdi:shield-home
+    options:
+      - home
+      - away
+      - night
+      - vacation
+      - custom
+    initial: home
+
+  keypad_arm_night_mode:
+    name: Keypad – Night arm mode
+    icon: mdi:shield-moon
+    options:
+      - night
+      - away
+      - home
+      - vacation
+      - custom
+    initial: night
+
+  keypad_arm_away_mode:
+    name: Keypad – Away arm mode
+    icon: mdi:shield-lock
+    options:
+      - away
+      - custom
+      - vacation
+      - home
+      - night
+    initial: away
